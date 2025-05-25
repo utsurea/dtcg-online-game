@@ -1,21 +1,30 @@
-// firebase.js
+{
+  `content`: `// firebase.js - 修正版
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, get, onValue, push, serverTimestamp, off } from 'firebase/database';
 
 // Firebase設定（環境変数から取得）
 const firebaseConfig = {
-  apiKey: "AIzaSyAbRqRKuWC-FSUeh8xeQGeUnhdFwICxw50",
-  authDomain: "dtcg-ab99c.firebaseapp.com",
-  databaseURL: "https://dtcg-ab99c-default-rtdb.firebaseio.com",
-  projectId: "dtcg-ab99c",
-  storageBucket: "dtcg-ab99c.firebasestorage.app",
-  messagingSenderId: "297281620080",
-  appId: "1:297281620080:web:48f22a13321c6493c1ccb5"
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  databaseURL: process.env.REACT_APP_FIREBASE_DATABASE_URL,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID
 };
 
 // Firebase初期化
-const app = initializeApp(firebaseConfig);
-const database = getDatabase(app);
+let app;
+let database;
+
+try {
+  app = initializeApp(firebaseConfig);
+  database = getDatabase(app);
+  console.log('Firebase初期化成功');
+} catch (error) {
+  console.error('Firebase初期化エラー:', error);
+}
 
 // ルームIDの生成
 function generateRoomId() {
@@ -27,12 +36,18 @@ function generateRoomId() {
   return result;
 }
 
-// 接続テスト
+// 接続テスト（簡略版）
 export async function testConnection() {
   try {
-    const testRef = ref(database, '.info/connected');
-    const snapshot = await get(testRef);
-    console.log('Firebase接続テスト:', snapshot.exists());
+    if (!database) {
+      console.error('Database が初期化されていません');
+      return false;
+    }
+    
+    // 簡単な書き込みテストを実行
+    const testRef = ref(database, 'test/connection');
+    await set(testRef, { timestamp: Date.now() });
+    console.log('Firebase接続テスト成功');
     return true;
   } catch (error) {
     console.error('Firebase接続エラー:', error);
@@ -43,6 +58,10 @@ export async function testConnection() {
 // ゲームルーム作成
 export async function createGameRoom(playerName) {
   try {
+    if (!database) {
+      throw new Error('Database が初期化されていません');
+    }
+    
     const roomId = generateRoomId();
     const roomRef = ref(database, `rooms/${roomId}`);
     
@@ -77,6 +96,10 @@ export async function createGameRoom(playerName) {
 // ゲームルーム参加
 export async function joinGameRoom(roomId, playerName) {
   try {
+    if (!database) {
+      throw new Error('Database が初期化されていません');
+    }
+    
     const roomRef = ref(database, `rooms/${roomId}`);
     const snapshot = await get(roomRef);
     
@@ -86,28 +109,33 @@ export async function joinGameRoom(roomId, playerName) {
     
     const roomData = snapshot.val();
     
-    if (roomData.players.player2) {
+    if (roomData.players && roomData.players.player2) {
       throw new Error('ルームは満員です');
     }
     
     // プレイヤー2として参加
-    const updateData = {
-      [`rooms/${roomId}/players/player2`]: {
-        id: 'player2',
-        name: playerName,
-        connected: true,
-        hero: null,
-        ready: false
-      },
-      [`rooms/${roomId}/phase`]: 'heroSelect',
-      [`rooms/${roomId}/gameData/gameLog`]: [
-        ...roomData.gameData.gameLog,
-        `${playerName} が参加しました`,
-        'ヒーローを選択してください'
-      ]
-    };
+    const player2Ref = ref(database, `rooms/${roomId}/players/player2`);
+    await set(player2Ref, {
+      id: 'player2',
+      name: playerName,
+      connected: true,
+      hero: null,
+      ready: false
+    });
     
-    await set(ref(database), updateData);
+    // フェーズを更新
+    const phaseRef = ref(database, `rooms/${roomId}/phase`);
+    await set(phaseRef, 'heroSelect');
+    
+    // ログを更新
+    const logRef = ref(database, `rooms/${roomId}/gameData/gameLog`);
+    const currentLog = roomData.gameData?.gameLog || [];
+    await set(logRef, [
+      ...currentLog,
+      `${playerName} が参加しました`,
+      'ヒーローを選択してください'
+    ]);
+    
     console.log(`ルーム ${roomId} に参加しました`);
     return 'player2';
   } catch (error) {
@@ -119,29 +147,35 @@ export async function joinGameRoom(roomId, playerName) {
 // ヒーロー選択
 export async function selectHero(roomId, playerId, heroId) {
   try {
-    const updateData = {
-      [`rooms/${roomId}/players/${playerId}/hero`]: heroId,
-      [`rooms/${roomId}/players/${playerId}/ready`]: true
-    };
+    if (!database) {
+      throw new Error('Database が初期化されていません');
+    }
     
-    await set(ref(database), updateData);
+    // ヒーロー選択を更新
+    const heroRef = ref(database, `rooms/${roomId}/players/${playerId}/hero`);
+    await set(heroRef, heroId);
+    
+    const readyRef = ref(database, `rooms/${roomId}/players/${playerId}/ready`);
+    await set(readyRef, true);
     
     // 両プレイヤーの準備状況を確認
     const roomRef = ref(database, `rooms/${roomId}`);
     const snapshot = await get(roomRef);
     const roomData = snapshot.val();
     
-    if (roomData.players.player1?.ready && roomData.players.player2?.ready) {
+    if (roomData.players?.player1?.ready && roomData.players?.player2?.ready) {
       // 両プレイヤーが準備完了したらゲーム開始
-      await set(ref(database, `rooms/${roomId}/phase`), 'gameStart');
+      const phaseRef = ref(database, `rooms/${roomId}/phase`);
+      await set(phaseRef, 'gameStart');
       
       // ゲームログ更新
-      const newLog = [
-        ...roomData.gameData.gameLog,
+      const logRef = ref(database, `rooms/${roomId}/gameData/gameLog`);
+      const currentLog = roomData.gameData?.gameLog || [];
+      await set(logRef, [
+        ...currentLog,
         '両プレイヤーの準備が完了しました',
         'ゲーム開始！'
-      ];
-      await set(ref(database, `rooms/${roomId}/gameData/gameLog`), newLog);
+      ]);
     }
     
     console.log(`ヒーロー選択完了: ${playerId} -> ${heroId}`);
@@ -154,12 +188,16 @@ export async function selectHero(roomId, playerId, heroId) {
 // ゲーム状態更新
 export async function updateGameState(roomId, gameData) {
   try {
-    const updateData = {
-      [`rooms/${roomId}/gameData`]: gameData,
-      [`rooms/${roomId}/lastUpdate`]: serverTimestamp()
-    };
+    if (!database) {
+      throw new Error('Database が初期化されていません');
+    }
     
-    await set(ref(database), updateData);
+    const gameDataRef = ref(database, `rooms/${roomId}/gameData`);
+    await set(gameDataRef, gameData);
+    
+    const updateRef = ref(database, `rooms/${roomId}/lastUpdate`);
+    await set(updateRef, serverTimestamp());
+    
     console.log('ゲーム状態を更新しました');
   } catch (error) {
     console.error('ゲーム状態更新エラー:', error);
@@ -169,6 +207,11 @@ export async function updateGameState(roomId, gameData) {
 
 // ゲーム状態監視
 export function subscribeToGameState(roomId, callback) {
+  if (!database) {
+    console.error('Database が初期化されていません');
+    return () => {};
+  }
+  
   const roomRef = ref(database, `rooms/${roomId}`);
   
   const unsubscribe = onValue(roomRef, (snapshot) => {
@@ -182,6 +225,7 @@ export function subscribeToGameState(roomId, callback) {
     }
   }, (error) => {
     console.error('Firebase監視エラー:', error);
+    callback(null);
   });
   
   // クリーンアップ関数を返す
@@ -194,6 +238,10 @@ export function subscribeToGameState(roomId, callback) {
 // ルーム削除（オプション）
 export async function deleteRoom(roomId) {
   try {
+    if (!database) {
+      throw new Error('Database が初期化されていません');
+    }
+    
     const roomRef = ref(database, `rooms/${roomId}`);
     await set(roomRef, null);
     console.log(`ルーム ${roomId} を削除しました`);
@@ -201,4 +249,6 @@ export async function deleteRoom(roomId) {
     console.error('ルーム削除エラー:', error);
     throw error;
   }
+}`,
+  `filename`: `firebase_fixed.js`
 }
