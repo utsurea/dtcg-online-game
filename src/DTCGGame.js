@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-
-// Firebase imports（実際の実装時に追加）
-// import { createGameRoom, joinGameRoom, updateGameState, subscribeToGameState, sendPlayerAction } from './firebase';
+// Firebase imports
+import { createGameRoom, joinGameRoom, updateGameState, subscribeToGameState, selectHero as firebaseSelectHero, testConnection } from './firebase';
 
 // ヒーローデータ（更新版）
 const HEROES = [
@@ -309,71 +308,46 @@ const DTCGGame = () => {
   };
 
   // オンライン機能
-  const createRoom = async () => {
-    if (!onlineState.playerName.trim()) {
-      alert('プレイヤー名を入力してください');
+const createRoom = async () => {
+  if (!onlineState.playerName.trim()) {
+    alert('プレイヤー名を入力してください');
+    return;
+  }
+
+  try {
+    // Firebase接続テスト
+    const connectionTest = await testConnection();
+    if (!connectionTest) {
+      alert('Firebase接続に失敗しました。設定を確認してください。');
       return;
     }
 
-    try {
-      // TODO: Firebase実装
-      // const roomId = await createGameRoom(onlineState.playerName);
-      const roomId = Math.random().toString(36).substr(2, 6).toUpperCase();
-      
-      setOnlineState(prev => ({
-        ...prev,
-        roomId,
-        playerId: 'player1',
-        connected: true,
-        isHost: true
-      }));
-      
-      setGameMode('online');
-      setGameState(prev => ({
-        ...prev,
-        phase: 'waiting',
-        gameLog: [`ルーム ${roomId} を作成しました`, '友人の参加を待っています...']
-      }));
-      
-      // TODO: Firebase監視開始
-      // subscribeToRoom(roomId);
-      
-    } catch (error) {
-      alert('ルームの作成に失敗しました: ' + error.message);
-    }
-  };
-
-  const joinRoom = async () => {
-    if (!onlineState.playerName.trim() || !onlineState.roomId.trim()) {
-      alert('プレイヤー名とルームIDを入力してください');
-      return;
-    }
-
-    try {
-      // TODO: Firebase実装
-      // const playerId = await joinGameRoom(onlineState.roomId, onlineState.playerName);
-      
-      setOnlineState(prev => ({
-        ...prev,
-        playerId: 'player2',
-        connected: true,
-        isHost: false
-      }));
-      
-      setGameMode('online');
-      setGameState(prev => ({
-        ...prev,
-        phase: 'heroSelect',
-        gameLog: [`ルーム ${onlineState.roomId} に参加しました`, 'ヒーローを選択してください']
-      }));
-      
-      // TODO: Firebase監視開始
-      // subscribeToRoom(onlineState.roomId);
-      
-    } catch (error) {
-      alert('ルームへの参加に失敗しました: ' + error.message);
-    }
-  };
+    // 実際のFirebase関数を使用
+    const roomId = await createGameRoom(onlineState.playerName);
+    
+    setOnlineState(prev => ({
+      ...prev,
+      roomId,
+      playerId: 'player1',
+      connected: true,
+      isHost: true
+    }));
+    
+    setGameMode('online');
+    setGameState(prev => ({
+      ...prev,
+      phase: 'waiting',
+      gameLog: [`ルーム ${roomId} を作成しました`, '友人の参加を待っています...']
+    }));
+    
+    // Firebase監視開始
+    subscribeToRoom(roomId);
+    
+  } catch (error) {
+    console.error('ルーム作成エラー:', error);
+    alert('ルームの作成に失敗しました: ' + error.message);
+  }
+};
 
   const showScoreEffect = (player, points, sourceName = null, sourcePosition = null) => {
     playSound(points > 0 ? (player === 'player' ? 'C5' : 'G4') : 'F3', 0.5);
