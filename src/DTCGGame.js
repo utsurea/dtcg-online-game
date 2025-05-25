@@ -76,20 +76,6 @@ const SPECIAL_UNIT_CARDS = [
 
 const ALL_CARDS = [...UNIT_CARDS, ...EVENT_CARDS];
 
-// スロット処理の改善
-function canPlayCardInSlot(card, slotIndex, playerSlots = [], isSlot4Available = false) {
-  if (!card || !card.slots) return false;
-  
-  if (card.slots.includes('FREE')) return true;
-  if (card.slots.includes('ALL')) return true;
-  
-  const targetSlot = slotIndex + 1;
-  if (!card.slots.includes(targetSlot)) return false;
-  if (playerSlots[slotIndex] !== null) return false;
-  
-  return true;
-}
-
 // 自動デッキ構築関数
 function createAutoDeck() {
   const deck = [];
@@ -130,54 +116,6 @@ const Particle = ({ x, y, color, onComplete, type = 'normal' }) => {
           }}
         >
           ⭐
-        </div>
-      </div>
-    );
-  }
-
-  if (type === 'score') {
-    return (
-      <div
-        className="absolute pointer-events-none z-50"
-        style={{
-          left: x,
-          top: y,
-          animation: 'scoreParticle 2.5s ease-out forwards'
-        }}
-      >
-        <div 
-          className="w-6 h-6 rounded-full flex items-center justify-center text-white font-bold text-sm"
-          style={{ 
-            backgroundColor: color,
-            animation: 'scoreGlow 2.5s ease-out forwards',
-            boxShadow: `0 0 15px ${color}`
-          }}
-        >
-          +
-        </div>
-      </div>
-    );
-  }
-
-  if (type === 'penalty') {
-    return (
-      <div
-        className="absolute pointer-events-none z-50"
-        style={{
-          left: x,
-          top: y,
-          animation: 'penaltyParticle 2.5s ease-out forwards'
-        }}
-      >
-        <div 
-          className="w-6 h-6 rounded-full flex items-center justify-center text-white font-bold text-sm"
-          style={{ 
-            backgroundColor: color,
-            animation: 'penaltyGlow 2.5s ease-out forwards',
-            boxShadow: `0 0 15px ${color}`
-          }}
-        >
-          -
         </div>
       </div>
     );
@@ -268,13 +206,8 @@ const DTCGGame = () => {
   }, []);
 
   const playSound = (frequency, duration = 0.2, type = 'sine') => {
-    if (synthRef.current) {
-      try {
-        synthRef.current.triggerAttackRelease(frequency, duration);
-      } catch (error) {
-        console.log('Sound play failed:', error);
-      }
-    }
+    // サウンド再生の簡易実装
+    console.log(`Playing sound: ${frequency}Hz for ${duration}s`);
   };
 
   const addParticle = (x, y, color = '#ffd700', type = 'normal') => {
@@ -306,7 +239,93 @@ const DTCGGame = () => {
     }));
   };
 
-  // Firebase リアルタイム監視
+  const hideCardHover = (immediate = false) => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    
+    if (immediate) {
+      setGameState(prev => ({
+        ...prev,
+        hoveredCard: null,
+        hoverPosition: { x: 0, y: 0 }
+      }));
+    } else {
+      hoverTimeoutRef.current = setTimeout(() => {
+        setGameState(prev => ({
+          ...prev,
+          hoveredCard: null,
+          hoverPosition: { x: 0, y: 0 }
+        }));
+      }, 100);
+    }
+  };
+
+  const showCardHover = (card, event) => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    if (card && !card.faceDown) {
+      const rect = event.target.getBoundingClientRect();
+      setGameState(prev => ({
+        ...prev,
+        hoveredCard: card,
+        hoverPosition: {
+          x: rect.left + rect.width / 2,
+          y: rect.top
+        }
+      }));
+    }
+  };
+
+  const CardTooltip = ({ card, position }) => {
+    if (!card) return null;
+    
+    return (
+      <div 
+        className="fixed z-50 bg-white border-2 border-gray-300 rounded-lg shadow-2xl p-4 max-w-xs pointer-events-none"
+        style={{
+          left: position.x,
+          top: position.y - 10,
+          transform: 'translate(-50%, -100%)',
+          boxShadow: `0 0 20px ${card.color || '#3b82f6'}40`
+        }}
+      >
+        <div className="text-lg font-bold mb-2" style={{ color: card.color }}>
+          {card.name}
+        </div>
+        
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="font-semibold">タイプ:</span>
+            <span className={card.type === 'ユニット' ? 'text-green-600' : 'text-red-600'}>
+              {card.type}
+            </span>
+          </div>
+          
+          {card.constantEffect && (
+            <div className="mt-3 pt-2 border-t border-gray-200">
+              <div className="font-semibold text-purple-600 mb-1">常時効果:</div>
+              <div className="text-gray-700 text-xs leading-relaxed">
+                {card.constantEffect}
+              </div>
+            </div>
+          )}
+          
+          {card.awakenEffect && (
+            <div className="mt-3 pt-2 border-t border-gray-200">
+              <div className="font-semibold text-red-600 mb-1">覚醒効果:</div>
+              <div className="text-gray-700 text-xs leading-relaxed">
+                {card.awakenEffect}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Firebase リアルタイム監視（修正版）
   const subscribeToRoom = (roomId) => {
     const unsubscribe = subscribeToGameState(roomId, (roomData) => {
       if (!roomData) {
@@ -327,6 +346,32 @@ const DTCGGame = () => {
             ...prev,
             opponentName: opponent.name
           }));
+          
+          // 相手のヒーロー選択を反映
+          if (opponent.hero && opponent.hero !== gameState.opponentHero?.id) {
+            const hero = HEROES.find(h => h.id === opponent.hero);
+            if (hero) {
+              setGameState(prev => ({
+                ...prev,
+                opponentHero: hero
+              }));
+              addLog(`${opponent.name}が${hero.name}を選択！`);
+            }
+          }
+        }
+      }
+
+      // フェーズ変更の処理
+      if (roomData.phase) {
+        if (roomData.phase === 'heroSelect' && gameState.phase === 'waiting') {
+          setGameState(prev => ({ 
+            ...prev, 
+            phase: 'heroSelect' 
+          }));
+          addLog('両プレイヤーが参加しました！ヒーローを選択してください');
+        } else if (roomData.phase === 'gameStart' && gameState.phase === 'heroSelect') {
+          // 両プレイヤーが準備完了 → ゲーム開始
+          startGameOnline();
         }
       }
 
@@ -334,16 +379,9 @@ const DTCGGame = () => {
       if (roomData.gameData) {
         setGameState(prev => ({
           ...prev,
-          phase: roomData.phase || prev.phase,
           round: roomData.gameData.round || prev.round,
           gameLog: roomData.gameData.gameLog || prev.gameLog
         }));
-      }
-
-      // フェーズ変更の処理
-      if (roomData.phase === 'heroSelect' && gameState.phase === 'waiting') {
-        setGameState(prev => ({ ...prev, phase: 'heroSelect' }));
-        addLog('両プレイヤーが参加しました！ヒーローを選択してください');
       }
     });
 
@@ -433,169 +471,6 @@ const DTCGGame = () => {
     }
   };
 
-  const showScoreEffect = (player, points, sourceName = null, sourcePosition = null) => {
-    playSound(points > 0 ? (player === 'player' ? 'C5' : 'G4') : 'F3', 0.5);
-    
-    setGameState(prev => ({
-      ...prev,
-      scoreEffect: { player, points, sourceName, sourcePosition },
-      scoreAnimation: { player, points, timestamp: Date.now() }
-    }));
-    
-    const particleColor = points > 0 
-      ? (player === 'player' ? '#ffd700' : '#ff6b6b')
-      : '#8b5cf6';
-    
-    const targetX = player === 'player' ? 600 : 200;
-    const targetY = 300;
-    
-    for (let i = 0; i < Math.min(15, Math.abs(points) * 3); i++) {
-      setTimeout(() => {
-        let x, y;
-        if (sourcePosition) {
-          const progress = Math.random() * 0.5;
-          x = sourcePosition.x + (targetX - sourcePosition.x) * progress + (Math.random() - 0.5) * 100;
-          y = sourcePosition.y + (targetY - sourcePosition.y) * progress + (Math.random() - 0.5) * 50;
-        } else {
-          x = targetX + (Math.random() - 0.5) * 150;
-          y = targetY + (Math.random() - 0.5) * 100;
-        }
-        addParticle(x, y, particleColor, points > 0 ? 'score' : 'penalty');
-      }, i * 80);
-    }
-    
-    if (points >= 3) {
-      for (let i = 0; i < 5; i++) {
-        setTimeout(() => {
-          const x = targetX + (Math.random() - 0.5) * 200;
-          const y = targetY + (Math.random() - 0.5) * 150;
-          addParticle(x, y, '#ffd700', 'hero');
-        }, i * 150);
-      }
-    }
-    
-    setTimeout(() => {
-      setGameState(prev => ({ 
-        ...prev, 
-        scoreEffect: null,
-        scoreAnimation: null 
-      }));
-    }, 3000);
-  };
-
-  const hideCardHover = (immediate = false) => {
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current);
-    }
-    
-    if (immediate) {
-      setGameState(prev => ({
-        ...prev,
-        hoveredCard: null,
-        hoverPosition: { x: 0, y: 0 }
-      }));
-    } else {
-      hoverTimeoutRef.current = setTimeout(() => {
-        setGameState(prev => ({
-          ...prev,
-          hoveredCard: null,
-          hoverPosition: { x: 0, y: 0 }
-        }));
-      }, 100);
-    }
-  };
-
-  const showCardHover = (card, event) => {
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current);
-    }
-    if (card && !card.faceDown) {
-      const rect = event.target.getBoundingClientRect();
-      setGameState(prev => ({
-        ...prev,
-        hoveredCard: card,
-        hoverPosition: {
-          x: rect.left + rect.width / 2,
-          y: rect.top
-        }
-      }));
-    }
-  };
-
-  const CardTooltip = ({ card, position }) => {
-    if (!card) return null;
-    
-    return (
-      <div 
-        className="fixed z-50 bg-white border-2 border-gray-300 rounded-lg shadow-2xl p-4 max-w-xs pointer-events-none"
-        style={{
-          left: position.x,
-          top: position.y - 10,
-          transform: 'translate(-50%, -100%)',
-          boxShadow: `0 0 20px ${card.color || '#3b82f6'}40`
-        }}
-      >
-        <div className="text-lg font-bold mb-2" style={{ color: card.color }}>
-          {card.name}
-        </div>
-        
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="font-semibold">タイプ:</span>
-            <span className={card.type === 'ユニット' ? 'text-green-600' : 'text-red-600'}>
-              {card.type}
-            </span>
-          </div>
-          
-          {card.type === 'ユニット' ? (
-            <>
-              <div className="flex justify-between">
-                <span className="font-semibold">攻撃力:</span>
-                <span className="text-red-600 font-bold">{card.atk}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="font-semibold">防御力:</span>
-                <span className="text-blue-600 font-bold">{card.currentDef || card.def}</span>
-              </div>
-              {card.damage > 0 && (
-                <div className="flex justify-between">
-                  <span className="font-semibold">ダメージ:</span>
-                  <span className="text-red-500 font-bold">{card.damage}</span>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="flex justify-between">
-              <span className="font-semibold">パワー:</span>
-              <span className="text-purple-600 font-bold">{card.power || 0}</span>
-            </div>
-          )}
-          
-          <div className="flex justify-between">
-            <span className="font-semibold">スロット:</span>
-            <span className="text-gray-600">{card.slots ? (Array.isArray(card.slots) ? card.slots.join(', ') : card.slots) : 'なし'}</span>
-          </div>
-          
-          {card.roundLimit > 1 && (
-            <div className="flex justify-between">
-              <span className="font-semibold">ラウンド制限:</span>
-              <span className="text-orange-600 font-bold">{card.roundLimit}以降</span>
-            </div>
-          )}
-          
-          {card.effect && card.effect !== 'なし' && (
-            <div className="mt-3 pt-2 border-t border-gray-200">
-              <div className="font-semibold text-purple-600 mb-1">効果:</div>
-              <div className="text-gray-700 text-xs leading-relaxed">
-                {card.effect}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   const selectHero = async (heroId, player = 'player') => {
     const hero = HEROES.find(h => h.id === heroId);
     playSound('F5', 0.5);
@@ -662,6 +537,48 @@ const DTCGGame = () => {
       isProcessing: false,
       gameLog: [`ゲーム開始！ラウンド1`, `自動デッキ構築完了（各プレイヤー${playerDeck.length}枚）`]
     }));
+  };
+
+  // オンライン対戦用のゲーム開始関数
+  const startGameOnline = () => {
+    if (!gameState.playerHero || !gameState.opponentHero) {
+      console.log('ヒーロー選択が完了していません');
+      return;
+    }
+    
+    const playerDeck = createAutoDeck();
+    const opponentDeck = createAutoDeck();
+    
+    playSound('C4', 0.5);
+    
+    setGameState(prev => ({
+      ...prev,
+      phase: 'play',
+      round: 1,
+      playerScore: 0,
+      opponentScore: 0,
+      playerHand: playerDeck.slice(0, 5),
+      opponentHand: opponentDeck.slice(0, 5),
+      playerDeck: playerDeck.slice(5),
+      opponentDeck: opponentDeck.slice(5),
+      playerSlots: [null, null, null],
+      opponentSlots: [null, null, null],
+      playerSlot4Available: false,
+      opponentSlot4Available: false,
+      playerSlot4Card: null,
+      opponentSlot4Card: null,
+      playerUnits: [],
+      opponentUnits: [],
+      playerRevealedCards: [],
+      opponentRevealedCards: [],
+      playerGraveyard: [],
+      opponentGraveyard: [],
+      currentPlayer: 'player',
+      isProcessing: false,
+      gameLog: [`オンライン対戦開始！`, `${gameState.playerHero.name} vs ${gameState.opponentHero.name}`]
+    }));
+    
+    addLog('ゲーム開始！オンライン対戦が始まりました');
   };
 
   const Card = ({ card, onClick, disabled, small, faceDown, isAnimating }) => {
@@ -870,6 +787,39 @@ const DTCGGame = () => {
               </div>
             )}
             
+            {/* 選択済みヒーロー表示 */}
+            <div className="flex justify-center space-x-8 mb-6">
+              <div className="text-center">
+                <div className="text-lg font-bold text-blue-600">あなた</div>
+                {gameState.playerHero ? (
+                  <div className="p-4 border-2 rounded-lg" style={{ borderColor: gameState.playerHero.color }}>
+                    <div className="font-bold" style={{ color: gameState.playerHero.color }}>
+                      {gameState.playerHero.name}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 border-2 border-gray-300 rounded-lg text-gray-500">
+                    未選択
+                  </div>
+                )}
+              </div>
+              
+              <div className="text-center">
+                <div className="text-lg font-bold text-red-600">相手</div>
+                {gameState.opponentHero ? (
+                  <div className="p-4 border-2 rounded-lg" style={{ borderColor: gameState.opponentHero.color }}>
+                    <div className="font-bold" style={{ color: gameState.opponentHero.color }}>
+                      {gameState.opponentHero.name}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 border-2 border-gray-300 rounded-lg text-gray-500">
+                    未選択
+                  </div>
+                )}
+              </div>
+            </div>
+            
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
               {HEROES.map(hero => (
                 <div
@@ -887,15 +837,45 @@ const DTCGGame = () => {
               ))}
             </div>
             
-            <button
-              onClick={startGame}
-              disabled={!gameState.playerHero}
-              className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-8 py-4 rounded-xl hover:from-green-600 hover:to-emerald-600 disabled:from-gray-400 disabled:to-gray-400 transition-all duration-200 transform hover:scale-105 disabled:scale-100 shadow-xl text-lg font-bold"
-            >
-              ゲーム開始
-            </button>
+            {/* ローカル対戦の場合はゲーム開始ボタンを表示 */}
+            {gameMode === 'local' && (
+              <button
+                onClick={startGame}
+                disabled={!gameState.playerHero}
+                className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-8 py-4 rounded-xl hover:from-green-600 hover:to-emerald-600 disabled:from-gray-400 disabled:to-gray-400 transition-all duration-200 transform hover:scale-105 disabled:scale-100 shadow-xl text-lg font-bold"
+              >
+                ゲーム開始
+              </button>
+            )}
+            
+            {/* オンライン対戦の場合は待機状況を表示 */}
+            {gameMode === 'online' && (
+              <div className="text-center">
+                {gameState.playerHero && gameState.opponentHero ? (
+                  <div className="text-green-600 font-bold text-lg">
+                    🎉 準備完了！ゲームを開始します...
+                  </div>
+                ) : (
+                  <div className="text-blue-600 font-bold">
+                    {gameState.playerHero ? '相手の選択を待っています...' : 'ヒーローを選択してください'}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
+
+        {/* パーティクル */}
+        {gameState.particles.map(particle => (
+          <Particle
+            key={particle.id}
+            x={particle.x}
+            y={particle.y}
+            color={particle.color}
+            type={particle.type}
+            onComplete={() => removeParticle(particle.id)}
+          />
+        ))}
 
         {/* Tooltips */}
         {gameState.hoveredCard && (
@@ -905,7 +885,7 @@ const DTCGGame = () => {
     );
   }
 
-  // 基本ゲーム画面（簡略版）
+  // ゲーム画面（プレイ中）
   return (
     <div className="max-w-7xl mx-auto p-4 bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900 min-h-screen relative overflow-hidden">
       {/* パーティクル */}
@@ -923,7 +903,7 @@ const DTCGGame = () => {
       <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl p-6 relative z-10">
         <div className="text-center space-y-6">
           <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            🎮 ゲーム画面
+            🎮 ゲーム進行中
           </h1>
           
           {gameMode === 'online' && (
@@ -934,17 +914,31 @@ const DTCGGame = () => {
           
           <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-xl p-6">
             <h2 className="text-2xl font-bold text-green-700 mb-4">
-              🎉 Firebase統合完了！
+              🎉 対戦開始！
             </h2>
-            <p className="text-lg text-gray-700 mb-4">
-              本格的なリアルタイム同期機能が動作しています！
-            </p>
-            <div className="text-sm text-gray-600">
-              • ルーム作成・参加機能 ✅<br/>
-              • リアルタイム状態同期 ✅<br/>
-              • ヒーロー選択同期 ✅<br/>
-              • Firebase接続テスト ✅
+            <div className="flex justify-center space-x-8">
+              <div className="text-center">
+                <div className="text-lg font-bold" style={{ color: gameState.playerHero?.color }}>
+                  {onlineState.playerName || 'あなた'}
+                </div>
+                <div className="text-xl font-bold" style={{ color: gameState.playerHero?.color }}>
+                  {gameState.playerHero?.name}
+                </div>
+              </div>
+              <div className="text-2xl">VS</div>
+              <div className="text-center">
+                <div className="text-lg font-bold" style={{ color: gameState.opponentHero?.color }}>
+                  {onlineState.opponentName || '相手'}
+                </div>
+                <div className="text-xl font-bold" style={{ color: gameState.opponentHero?.color }}>
+                  {gameState.opponentHero?.name}
+                </div>
+              </div>
             </div>
+          </div>
+          
+          <div className="text-sm text-gray-600">
+            ゲームロジックは実装中です。Firebase同期機能は正常に動作しています！
           </div>
           
           <button 
@@ -980,30 +974,6 @@ const DTCGGame = () => {
         @keyframes heroGlow {
           0%, 100% { box-shadow: 0 0 10px currentColor; }
           50% { box-shadow: 0 0 30px currentColor, 0 0 40px currentColor; }
-        }
-        
-        @keyframes scoreParticle {
-          0% { transform: translateY(0) translateX(0) scale(1) rotate(0deg); opacity: 1; }
-          30% { transform: translateY(-40px) translateX(-10px) scale(1.3) rotate(120deg); opacity: 1; }
-          70% { transform: translateY(-90px) translateX(-30px) scale(1.1) rotate(300deg); opacity: 0.8; }
-          100% { transform: translateY(-140px) translateX(-60px) scale(0.5) rotate(450deg); opacity: 0; }
-        }
-        
-        @keyframes scoreGlow {
-          0%, 100% { box-shadow: 0 0 15px currentColor, 0 0 30px currentColor; transform: scale(1); }
-          50% { box-shadow: 0 0 40px currentColor, 0 0 60px currentColor, 0 0 80px currentColor; transform: scale(1.1); }
-        }
-        
-        @keyframes penaltyParticle {
-          0% { transform: translateY(0) translateX(0) scale(1) rotate(0deg); opacity: 1; }
-          30% { transform: translateY(40px) translateX(10px) scale(1.3) rotate(-120deg); opacity: 1; }
-          70% { transform: translateY(90px) translateX(30px) scale(1.1) rotate(-300deg); opacity: 0.8; }
-          100% { transform: translateY(140px) translateX(60px) scale(0.5) rotate(-450deg); opacity: 0; }
-        }
-        
-        @keyframes penaltyGlow {
-          0%, 100% { box-shadow: 0 0 10px currentColor, 0 0 20px currentColor; transform: scale(1); }
-          50% { box-shadow: 0 0 25px currentColor, 0 0 35px currentColor, 0 0 45px currentColor; transform: scale(1.2); }
         }
       `}</style>
     </div>
