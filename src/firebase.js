@@ -1,16 +1,8 @@
+// firebase.js
 import { initializeApp } from 'firebase/app';
-import { 
-  getDatabase, 
-  ref, 
-  set, 
-  onValue, 
-  push, 
-  serverTimestamp,
-  update,
-  remove
-} from 'firebase/database';
+import { getDatabase, ref, set, get, onValue, push, serverTimestamp, off } from 'firebase/database';
 
-// Firebase設定（あなたの実際の設定に置き換え）
+// Firebase設定（環境変数から取得）
 const firebaseConfig = {
   apiKey: "AIzaSyAbRqRKuWC-FSUeh8xeQGeUnhdFwICxw50",
   authDomain: "dtcg-ab99c.firebaseapp.com",
@@ -23,214 +15,190 @@ const firebaseConfig = {
 
 // Firebase初期化
 const app = initializeApp(firebaseConfig);
-export const database = getDatabase(app);
+const database = getDatabase(app);
+
+// ルームIDの生成
+function generateRoomId() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < 6; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+// 接続テスト
+export async function testConnection() {
+  try {
+    const testRef = ref(database, '.info/connected');
+    const snapshot = await get(testRef);
+    console.log('Firebase接続テスト:', snapshot.exists());
+    return true;
+  } catch (error) {
+    console.error('Firebase接続エラー:', error);
+    return false;
+  }
+}
 
 // ゲームルーム作成
-export const createGameRoom = async (playerName) => {
+export async function createGameRoom(playerName) {
   try {
-    const roomsRef = ref(database, 'rooms');
-    const newRoomRef = push(roomsRef);
-    const roomId = newRoomRef.key;
+    const roomId = generateRoomId();
+    const roomRef = ref(database, `rooms/${roomId}`);
     
-    const initialGameState = {
+    const roomData = {
+      id: roomId,
+      createdAt: serverTimestamp(),
       phase: 'waiting',
-      roomInfo: {
-        id: roomId,
-        createdAt: serverTimestamp(),
-        lastActivity: serverTimestamp()
-      },
       players: {
         player1: {
           id: 'player1',
           name: playerName,
           connected: true,
-          ready: false,
-          hero: null
-        },
-        player2: null
+          hero: null,
+          ready: false
+        }
       },
       gameData: {
         round: 1,
-        currentPlayer: 'player1',
-        phase: 'heroSelect',
-        isProcessing: false,
-        scores: {
-          player1: 0,
-          player2: 0
-        },
-        heroes: {
-          player1: null,
-          player2: null
-        },
-        hands: {
-          player1: [],
-          player2: []
-        },
-        decks: {
-          player1: [],
-          player2: []
-        },
-        slots: {
-          player1: [null, null, null],
-          player2: [null, null, null]
-        },
-        units: {
-          player1: [],
-          player2: []
-        },
-        revealedCards: {
-          player1: [],
-          player2: []
-        },
-        graveyards: {
-          player1: [],
-          player2: []
-        },
-        gameLog: [`ルーム ${roomId} が作成されました`]
+        gameLog: [`ルーム ${roomId} を作成しました`, '友人の参加を待っています...']
       }
     };
     
-    await set(newRoomRef, initialGameState);
-    console.log('ルーム作成成功:', roomId);
+    await set(roomRef, roomData);
+    console.log(`ルーム ${roomId} を作成しました`);
     return roomId;
-    
   } catch (error) {
     console.error('ルーム作成エラー:', error);
-    throw new Error('ルームの作成に失敗しました');
+    throw error;
   }
-};
+}
 
 // ゲームルーム参加
-export const joinGameRoom = async (roomId, playerName) => {
+export async function joinGameRoom(roomId, playerName) {
   try {
     const roomRef = ref(database, `rooms/${roomId}`);
+    const snapshot = await get(roomRef);
     
-    return new Promise((resolve, reject) => {
-      onValue(roomRef, (snapshot) => {
-        const room = snapshot.val();
-        
-        if (!room) {
-          reject(new Error('ルームが見つかりません'));
-          return;
-        }
-        
-        if (room.players.player2) {
-          reject(new Error('ルームは満員です'));
-          return;
-        }
-        
-        // 2番目のプレイヤーとして参加
-        const updates = {
-          [`rooms/${roomId}/players/player2`]: {
-            id: 'player2',
-            name: playerName,
-            connected: true,
-            ready: false,
-            hero: null
-          },
-          [`rooms/${roomId}/phase`]: 'heroSelect',
-          [`rooms/${roomId}/roomInfo/lastActivity`]: serverTimestamp()
-        };
-        
-        update(ref(database), updates)
-          .then(() => {
-            console.log('ルーム参加成功:', roomId);
-            resolve('player2');
-          })
-          .catch((error) => {
-            console.error('ルーム参加エラー:', error);
-            reject(new Error('ルームへの参加に失敗しました'));
-          });
-        
-      }, { onlyOnce: true });
-    });
+    if (!snapshot.exists()) {
+      throw new Error('ルームが見つかりません');
+    }
     
+    const roomData = snapshot.val();
+    
+    if (roomData.players.player2) {
+      throw new Error('ルームは満員です');
+    }
+    
+    // プレイヤー2として参加
+    const updateData = {
+      [`rooms/${roomId}/players/player2`]: {
+        id: 'player2',
+        name: playerName,
+        connected: true,
+        hero: null,
+        ready: false
+      },
+      [`rooms/${roomId}/phase`]: 'heroSelect',
+      [`rooms/${roomId}/gameData/gameLog`]: [
+        ...roomData.gameData.gameLog,
+        `${playerName} が参加しました`,
+        'ヒーローを選択してください'
+      ]
+    };
+    
+    await set(ref(database), updateData);
+    console.log(`ルーム ${roomId} に参加しました`);
+    return 'player2';
   } catch (error) {
     console.error('ルーム参加エラー:', error);
     throw error;
   }
-};
-
-// ゲーム状態更新
-export const updateGameState = async (roomId, updates) => {
-  try {
-    const updateData = {};
-    
-    Object.keys(updates).forEach(key => {
-      updateData[`rooms/${roomId}/${key}`] = updates[key];
-    });
-    
-    updateData[`rooms/${roomId}/roomInfo/lastActivity`] = serverTimestamp();
-    
-    await update(ref(database), updateData);
-    console.log('ゲーム状態更新成功');
-    
-  } catch (error) {
-    console.error('ゲーム状態更新エラー:', error);
-    throw new Error('ゲーム状態の更新に失敗しました');
-  }
-};
-
-// ゲーム状態監視
-export const subscribeToGameState = (roomId, callback) => {
-  try {
-    const roomRef = ref(database, `rooms/${roomId}`);
-    
-    const unsubscribe = onValue(roomRef, (snapshot) => {
-      const room = snapshot.val();
-      if (room) {
-        console.log('ゲーム状態受信:', room.phase);
-        callback(room);
-      } else {
-        console.warn('ルームが存在しません:', roomId);
-        callback(null);
-      }
-    }, (error) => {
-      console.error('ゲーム状態監視エラー:', error);
-    });
-    
-    return unsubscribe;
-    
-  } catch (error) {
-    console.error('ゲーム状態監視開始エラー:', error);
-    throw new Error('ゲーム状態の監視開始に失敗しました');
-  }
-};
+}
 
 // ヒーロー選択
-export const selectHero = async (roomId, playerId, heroId) => {
+export async function selectHero(roomId, playerId, heroId) {
   try {
-    const updates = {
+    const updateData = {
       [`rooms/${roomId}/players/${playerId}/hero`]: heroId,
-      [`rooms/${roomId}/gameData/heroes/${playerId}`]: heroId,
-      [`rooms/${roomId}/roomInfo/lastActivity`]: serverTimestamp()
+      [`rooms/${roomId}/players/${playerId}/ready`]: true
     };
     
-    await update(ref(database), updates);
-    console.log('ヒーロー選択成功:', playerId, heroId);
+    await set(ref(database), updateData);
     
+    // 両プレイヤーの準備状況を確認
+    const roomRef = ref(database, `rooms/${roomId}`);
+    const snapshot = await get(roomRef);
+    const roomData = snapshot.val();
+    
+    if (roomData.players.player1?.ready && roomData.players.player2?.ready) {
+      // 両プレイヤーが準備完了したらゲーム開始
+      await set(ref(database, `rooms/${roomId}/phase`), 'gameStart');
+      
+      // ゲームログ更新
+      const newLog = [
+        ...roomData.gameData.gameLog,
+        '両プレイヤーの準備が完了しました',
+        'ゲーム開始！'
+      ];
+      await set(ref(database, `rooms/${roomId}/gameData/gameLog`), newLog);
+    }
+    
+    console.log(`ヒーロー選択完了: ${playerId} -> ${heroId}`);
   } catch (error) {
     console.error('ヒーロー選択エラー:', error);
-    throw new Error('ヒーローの選択に失敗しました');
+    throw error;
   }
-};
+}
 
-// 接続テスト
-export const testConnection = async () => {
+// ゲーム状態更新
+export async function updateGameState(roomId, gameData) {
   try {
-    const testRef = ref(database, 'test');
-    await set(testRef, {
-      timestamp: serverTimestamp(),
-      message: 'Firebase接続テスト成功'
-    });
+    const updateData = {
+      [`rooms/${roomId}/gameData`]: gameData,
+      [`rooms/${roomId}/lastUpdate`]: serverTimestamp()
+    };
     
-    await remove(testRef);
-    
-    console.log('Firebase接続テスト成功');
-    return true;
-    
+    await set(ref(database), updateData);
+    console.log('ゲーム状態を更新しました');
   } catch (error) {
-    console.error('Firebase接続テストエラー:', error);
-    return false;
+    console.error('ゲーム状態更新エラー:', error);
+    throw error;
   }
-};
+}
+
+// ゲーム状態監視
+export function subscribeToGameState(roomId, callback) {
+  const roomRef = ref(database, `rooms/${roomId}`);
+  
+  const unsubscribe = onValue(roomRef, (snapshot) => {
+    if (snapshot.exists()) {
+      const roomData = snapshot.val();
+      console.log('Firebase データ受信:', roomData);
+      callback(roomData);
+    } else {
+      console.log('ルームが削除されました');
+      callback(null);
+    }
+  }, (error) => {
+    console.error('Firebase監視エラー:', error);
+  });
+  
+  // クリーンアップ関数を返す
+  return () => {
+    off(roomRef);
+    console.log('Firebase監視を停止しました');
+  };
+}
+
+// ルーム削除（オプション）
+export async function deleteRoom(roomId) {
+  try {
+    const roomRef = ref(database, `rooms/${roomId}`);
+    await set(roomRef, null);
+    console.log(`ルーム ${roomId} を削除しました`);
+  } catch (error) {
+    console.error('ルーム削除エラー:', error);
+    throw error;
+  }
+}
